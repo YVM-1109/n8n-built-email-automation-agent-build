@@ -475,7 +475,3 @@ It is not intended to claim that autonomous email management has been completely
 Instead, the project represents my attempt to take an LLM beyond a simple chat interface and place it inside a real automation pipeline where its output can influence actual software behavior.
 
 There is still a lot of engineering work between this prototype and a production-grade system.
-
-That gap is also what makes the project interesting to me.
-
-**This repository is where that experimentation starts.**
