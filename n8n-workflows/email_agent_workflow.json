@@ -1,0 +1,542 @@
+{
+  "name": "Email Management Agent - Production",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-start",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "mailbox": "INBOX",
+        "options": {
+          "since": "={{ $now.minus({ hours: 1 }).toISO() }}",
+          "limit": 50
+        }
+      },
+      "id": "imap-trigger",
+      "name": "IMAP_Fetch_Emails",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        220,
+        0
+      ],
+      "credentials": {
+        "imap": {
+          "id": "YOUR_IMAP_CRED_ID",
+          "name": "IMAP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Deduplication Engine\nconst messageId = $input.first().json.messageId || $input.first().json.id;\nconst hash = messageId.replace(/[^a-zA-Z0-9]/g, '').substring(0, 64);\nconst seen = $getWorkflowStaticData('global').seen || {};\nif (seen[hash]) {\n  return [{ json: { skipped: true, reason: 'duplicate', messageId } }];\n}\nseen[hash] = Date.now();\n$getWorkflowStaticData('global').seen = seen;\nreturn [{ json: { ...$input.first().json, dedupHash: hash, skipped: false } }];"
+      },
+      "id": "dedup-check",
+      "name": "Deduplication_Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-1",
+              "leftValue": "={{ $json.skipped }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "filter-dupes",
+      "name": "Filter_Duplicates",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Content Extraction & Normalization\nconst email = $input.first().json;\nlet textContent = email.textPlain || '';\nif (!textContent && email.textHtml) {\n  textContent = email.textHtml.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\nconst from = email.from || {};\nconst senderEmail = from.value?.[0]?.address || from.address || 'unknown';\nconst senderName = from.value?.[0]?.name || from.name || senderEmail;\nreturn [{\n  json: {\n    messageId: email.messageId,\n    subject: email.subject || '(No Subject)',\n    senderEmail,\n    senderName,\n    to: (email.to?.value || []).map(v => v.address),\n    cc: (email.cc?.value || []).map(v => v.address),\n    date: email.date,\n    textContent: textContent.substring(0, 8000),\n    htmlContent: email.textHtml || '',\n    attachments: (email.attachments || []).map(a => ({ filename: a.filename, size: a.size })),\n    dedupHash: email.dedupHash,\n    processedAt: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "content-extract",
+      "name": "Content_Extraction",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "options": {},
+        "prompt": "=You are an expert email triage agent. Analyze this email and return ONLY JSON (no markdown, no explanation):\n{\n  \"intent\": \"urgent|action_required|informational|newsletter|spam|meeting_request\",\n  \"confidence\": 0.0-1.0,\n  \"urgency_score\": 1-10,\n  \"sentiment\": \"positive|neutral|negative\",\n  \"entities\": {\n    \"deadlines\": [],\n    \"action_items\": [],\n    \"people_mentioned\": [],\n    \"projects\": []\n  },\n  \"suggested_action\": \"reply|forward|archive|flag|create_task|schedule_meeting|quarantine\",\n  \"summary\": \"2-3 sentence summary\"\n}\n\nEmail:\nSubject: {{ $json.subject }}\nFrom: {{ $json.senderName }} <{{ $json.senderEmail }}>\nDate: {{ $json.date }}\nContent: {{ $json.textContent }}",
+        "model": "gpt-4o-mini",
+        "temperature": 0.1
+      },
+      "id": "llm-classify",
+      "name": "LLM_Classification",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse LLM response\nconst email = $input.first().json;\nlet classification = {};\ntry {\n  const text = email.text || email.response || '{}';\n  const jsonMatch = text.match(/\\{[\\s\\S]*\\}/);\n  classification = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(text);\n} catch (e) {\n  classification = {\n    intent: 'informational', confidence: 0.3, urgency_score: 3,\n    sentiment: 'neutral', entities: { deadlines: [], action_items: [], people_mentioned: [], projects: [] },\n    suggested_action: 'archive', summary: 'Failed to classify', parseError: true\n  };\n}\nif (classification.confidence < 0.7) {\n  const subject = (email.subject || '').toLowerCase();\n  if (subject.includes('urgent') || subject.includes('asap')) {\n    classification.intent = 'urgent'; classification.urgency_score = 9;\n  }\n  if (subject.includes('unsubscribe') || subject.includes('newsletter')) {\n    classification.intent = 'newsletter';\n  }\n}\nreturn [{ json: { ...email, classification, routingDecision: classification.suggested_action || 'archive' } }];"
+      },
+      "id": "parse-classification",
+      "name": "Parse_Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "urgent",
+              "output": 0
+            },
+            {
+              "value": "action_required",
+              "output": 1
+            },
+            {
+              "value": "meeting_request",
+              "output": 2
+            },
+            {
+              "value": "newsletter",
+              "output": 3
+            },
+            {
+              "value": "spam",
+              "output": 4
+            }
+          ],
+          "defaultOutput": 5
+        },
+        "options": {},
+        "dataType": "string",
+        "value1": "={{ $json.classification.intent }}"
+      },
+      "id": "intent-router",
+      "name": "Intent_Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2.1,
+      "position": [
+        1540,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "channel": "={{ $env.SLACK_ALERT_CHANNEL || '#email-alerts' }}",
+        "text": "=🚨 **URGENT EMAIL**\n\nFrom: {{ $json.senderName }}\nSubject: {{ $json.subject }}\nUrgency: {{ $json.classification.urgency_score }}/10\nSummary: {{ $json.classification.summary }}",
+        "otherOptions": {}
+      },
+      "id": "slack-urgent",
+      "name": "Slack_Urgent_Alert",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.1,
+      "position": [
+        1800,
+        -400
+      ],
+      "credentials": {
+        "slackApi": {
+          "id": "YOUR_SLACK_CRED_ID",
+          "name": "Slack API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.NOTION_TASKS_DB }}",
+          "mode": "id"
+        },
+        "databaseName": "Email Tasks",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "propertyName": "Name",
+              "value": "={{ $json.subject }}"
+            },
+            {
+              "propertyName": "Status",
+              "value": "To Do"
+            },
+            {
+              "propertyName": "Priority",
+              "value": "=High"
+            },
+            {
+              "propertyName": "Source",
+              "value": "={{ $json.senderEmail }}"
+            },
+            {
+              "propertyName": "Summary",
+              "value": "={{ $json.classification.summary }}"
+            }
+          ]
+        }
+      },
+      "id": "notion-task",
+      "name": "Notion_Create_Task",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        1800,
+        -200
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "YOUR_NOTION_CRED_ID",
+          "name": "Notion API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {},
+        "prompt": "=Draft a professional email response.\n\nOriginal Email:\nFrom: {{ $json.senderName }} <{{ $json.senderEmail }}>\nSubject: {{ $json.subject }}\nContent: {{ $json.textContent }}\n\nContext:\n- Intent: {{ $json.classification.intent }}\n- Action Items: {{ $json.classification.entities.action_items.join(', ') }}\n- Tone: Professional but warm\n\nReturn ONLY the email body text.",
+        "model": "gpt-4o",
+        "temperature": 0.7
+      },
+      "id": "llm-draft",
+      "name": "LLM_Draft_Response",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1,
+      "position": [
+        1800,
+        0
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_OPENAI_CRED_ID",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract dates from email content\nconst email = $input.first().json;\nconst text = (email.textContent || '').toLowerCase();\nconst datePatterns = [\n  /(monday|tuesday|wednesday|thursday|friday|saturday|sunday)[,\\s]+(\\w+)[,\\s]+(\\d{1,2})/gi,\n  /(\\d{1,2})[\\/\\-\\.](\\d{1,2})[\\/\\-\\.](\\d{2,4})/g,\n  /(\\d{1,2}):(\\d{2})\\s*(am|pm)/gi\n];\nconst extractedDates = [];\ndatePatterns.forEach(p => {\n  const matches = text.match(p);\n  if (matches) extractedDates.push(...matches);\n});\nreturn [{ json: { ...email, extractedDates: extractedDates.slice(0, 3), calendarAction: extractedDates.length > 0 ? 'review_needed' : 'no_dates_found' } }];"
+      },
+      "id": "extract-dates",
+      "name": "Extract_Meeting_Dates",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "mailbox": "Newsletters"
+      },
+      "id": "archive-newsletter",
+      "name": "Archive_Newsletter",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        400
+      ],
+      "credentials": {
+        "imap": {
+          "id": "YOUR_IMAP_CRED_ID",
+          "name": "IMAP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "mailbox": "Spam"
+      },
+      "id": "quarantine-spam",
+      "name": "Quarantine_Spam",
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2,
+      "position": [
+        1800,
+        600
+      ],
+      "credentials": {
+        "imap": {
+          "id": "YOUR_IMAP_CRED_ID",
+          "name": "IMAP Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log execution for analytics\nconst data = $input.first().json;\nconst logEntry = {\n  executionId: $execution.id,\n  timestamp: new Date().toISOString(),\n  messageId: data.messageId,\n  sender: data.senderEmail,\n  subject: (data.subject || '').substring(0, 100),\n  intent: data.classification?.intent || 'unknown',\n  confidence: data.classification?.confidence || 0,\n  urgencyScore: data.classification?.urgency_score || 0,\n  actionTaken: data.routingDecision || 'none',\n  success: true\n};\nconsole.log('ANALYTICS_LOG:', JSON.stringify(logEntry));\nreturn [{ json: logEntry }];"
+      },
+      "id": "analytics-log",
+      "name": "Analytics_Logger",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "IMAP_Fetch_Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IMAP_Fetch_Emails": {
+      "main": [
+        [
+          {
+            "node": "Deduplication_Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduplication_Check": {
+      "main": [
+        [
+          {
+            "node": "Filter_Duplicates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter_Duplicates": {
+      "main": [
+        [
+          {
+            "node": "Content_Extraction",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Content_Extraction": {
+      "main": [
+        [
+          {
+            "node": "LLM_Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM_Classification": {
+      "main": [
+        [
+          {
+            "node": "Parse_Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse_Classification": {
+      "main": [
+        [
+          {
+            "node": "Intent_Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Intent_Router": {
+      "main": [
+        [
+          {
+            "node": "Slack_Urgent_Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notion_Create_Task",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract_Meeting_Dates",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Archive_Newsletter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Quarantine_Spam",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack_Urgent_Alert": {
+      "main": [
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notion_Create_Task": {
+      "main": [
+        [
+          {
+            "node": "LLM_Draft_Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM_Draft_Response": {
+      "main": [
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract_Meeting_Dates": {
+      "main": [
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Archive_Newsletter": {
+      "main": [
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Quarantine_Spam": {
+      "main": [
+        [
+          {
+            "node": "Analytics_Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveExecutionProgress": true,
+    "timezone": "UTC",
+    "errorWorkflow": "Error_Handler_Workflow"
+  },
+  "staticData": null,
+  "tags": [
+    "email",
+    "agentic-ai",
+    "production"
+  ]
+}

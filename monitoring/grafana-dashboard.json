@@ -1,0 +1,536 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "email-agent-main",
+    "title": "Email Management Agent - Operations Dashboard",
+    "tags": [
+      "email",
+      "n8n",
+      "agentic-ai"
+    ],
+    "timezone": "browser",
+    "schemaVersion": 36,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "\ud83d\udce7 Emails Processed (Last 24h)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(emails_processed_total[24h]))",
+            "legendFormat": "Total"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "green"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 5000
+                },
+                {
+                  "color": "red",
+                  "value": 10000
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "\u26a1 Processing Rate (per min)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 4,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "rate(emails_processed_total[5m]) * 60",
+            "legendFormat": "Emails/min"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "blue"
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "\ud83d\udd34 Error Rate (%)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 8,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "(sum(rate(emails_failed_total[5m])) / sum(rate(emails_processed_total[5m]))) * 100",
+            "legendFormat": "Error %"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 2
+                },
+                {
+                  "color": "red",
+                  "value": 5
+                }
+              ]
+            },
+            "unit": "percent"
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "\ud83d\udcb0 LLM Cost (Today)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 12,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "sum(llm_cost_usd_total) - sum(llm_cost_usd_total offset 1d)",
+            "legendFormat": "USD"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "orange"
+            },
+            "unit": "currencyUSD"
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "\u23f1\ufe0f Avg Processing Time",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 16,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "avg(email_processing_duration_ms)",
+            "legendFormat": "ms"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "purple"
+            },
+            "unit": "ms"
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "\ud83d\udcca Queue Depth",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 4,
+          "x": 20,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "redis_queue_depth",
+            "legendFormat": "Pending"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 500
+                },
+                {
+                  "color": "red",
+                  "value": 1000
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 7,
+        "title": "\ud83d\udcc8 Email Volume Over Time",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum by (intent) (rate(emails_processed_total[5m]))",
+            "legendFormat": "{{intent}}"
+          },
+          {
+            "expr": "sum(rate(emails_failed_total[5m]))",
+            "legendFormat": "failed"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2,
+              "fillOpacity": 10
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "\ud83c\udfaf Intent Distribution",
+        "type": "piechart",
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 12,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum by (intent) (emails_processed_total)",
+            "legendFormat": "{{intent}}"
+          }
+        ],
+        "options": {
+          "pieType": "donut"
+        }
+      },
+      {
+        "id": 9,
+        "title": "\ud83e\udd16 LLM Token Usage",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 6,
+          "x": 18,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(llm_tokens_input_total[5m]))",
+            "legendFormat": "Input tokens"
+          },
+          {
+            "expr": "sum(rate(llm_tokens_output_total[5m]))",
+            "legendFormat": "Output tokens"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2
+            },
+            "unit": "short"
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "\u26a0\ufe0f Dead Letter Queue",
+        "type": "table",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "dlq_items_by_status",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "indexByName": {
+                "status": 0,
+                "count": 1,
+                "oldest": 2
+              },
+              "renameByName": {
+                "status": "Status",
+                "count": "Count",
+                "oldest": "Oldest Item"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "\ud83d\udd25 Top Senders (Last 7 Days)",
+        "type": "table",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "topk(10, sum by (sender_domain) (increase(emails_processed_total[7d])))",
+            "format": "table"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "indexByName": {
+                "sender_domain": 0,
+                "Value": 1
+              },
+              "renameByName": {
+                "sender_domain": "Domain",
+                "Value": "Email Count"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "\u23f3 Processing Latency Percentiles",
+        "type": "timeseries",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(email_processing_duration_bucket[5m])) by (le))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(email_processing_duration_bucket[5m])) by (le))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(email_processing_duration_bucket[5m])) by (le))",
+            "legendFormat": "p99"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineWidth": 2
+            },
+            "unit": "ms"
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "\ud83e\udde0 Classification Confidence Distribution",
+        "type": "histogram",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "classification_confidence_bucket",
+            "legendFormat": "Confidence"
+          }
+        ],
+        "options": {
+          "legend": {
+            "displayMode": "hidden"
+          }
+        }
+      },
+      {
+        "id": 14,
+        "title": "\ud83d\udcec Pending Approvals",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 0,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "actions_awaiting_approval_total",
+            "legendFormat": "Pending"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "green",
+                  "value": null
+                },
+                {
+                  "color": "yellow",
+                  "value": 5
+                },
+                {
+                  "color": "red",
+                  "value": 10
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 15,
+        "title": "\ud83d\uddd1\ufe0f Spam Blocked (Last 24h)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 6,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(emails_quarantined_total{reason='spam'}[24h]))",
+            "legendFormat": "Blocked"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "red"
+            }
+          }
+        }
+      },
+      {
+        "id": 16,
+        "title": "\ud83d\udcc5 Meetings Extracted (This Week)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 12,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(meetings_extracted_total[7d]))",
+            "legendFormat": "Meetings"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "blue"
+            }
+          }
+        }
+      },
+      {
+        "id": 17,
+        "title": "\u2705 Tasks Created (This Week)",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 6,
+          "x": 18,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "sum(increase(tasks_created_total[7d]))",
+            "legendFormat": "Tasks"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "fixed",
+              "fixedColor": "green"
+            }
+          }
+        }
+      }
+    ]
+  },
+  "overwrite": true
+}

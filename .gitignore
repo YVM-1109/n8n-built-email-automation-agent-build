@@ -1,0 +1,42 @@
+# Environment variables (contains secrets)
+.env
+
+# Docker volumes (data)
+volumes/
+postgres_data/
+redis_data/
+qdrant_data/
+n8n_data/
+minio_data/
+prometheus_data/
+grafana_data/
+
+# Logs
+*.log
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Node / Python
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Backup files
+*.sql.bak
+*.zip
+*.tar.gz
+
+# n8n local data (if mounted locally)
+.n8n/
