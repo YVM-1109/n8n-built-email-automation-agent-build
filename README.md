@@ -1,249 +1,481 @@
-# Email Management Agent
+# AI Email Automation Agent
 
-> A production-grade, agentic AI system that automatically ingests, classifies, and acts on emails using LLM-powered decision-making. Built with n8n, OpenAI, PostgreSQL, Redis, and Docker.
+An experimental **AI-powered email automation agent** that I built using **n8n** to explore how LLMs can be used to understand, classify, and automate actions around incoming emails.
 
-[![Docker](https://img.shields.io/badge/Docker-Ready-blue)](https://docker.com)
-[![n8n](https://img.shields.io/badge/n8n-Self--hosted-orange)](https://n8n.io)
-[![OpenAI](https://img.shields.io/badge/OpenAI-GPT--4o-green)](https://openai.com)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+This project is currently a **working prototype**. My goal with this build was not to create a fully production-ready email platform, but to design and implement the core architecture of an intelligent email workflow and understand the engineering challenges involved in making AI-driven automation reliable.
 
 ---
 
-## Features
+## Why I Built This
 
-- **Intelligent Classification** — GPT-4o-mini analyzes every email for intent, urgency, sentiment, and entities
-- **Dynamic Routing** — Automatically routes emails to Slack alerts, Notion tasks, draft responses, calendar extraction, or spam quarantine
-- **Deduplication Engine** — Redis-backed cache prevents reprocessing the same email
-- **Human-in-the-Loop** — Low-confidence or high-urgency emails pause for approval
-- **Real-Time Streaming** — Polls Gmail IMAP every 60 seconds (or webhook push)
-- **Analytics & Observability** — Full execution logging in PostgreSQL with Grafana dashboards
-- **Fault Tolerance** — Dead letter queue, circuit breaker, exponential backoff retries
-- **Zero Cost** — Self-hosted stack; only pay for OpenAI API usage (~$0.50/1K emails)
+Email is one of those tasks that looks simple until you have to deal with a large volume of it.
+
+Every email potentially requires a different action:
+
+* Some need an immediate response.
+* Some contain tasks or deadlines.
+* Some are meeting requests.
+* Some are newsletters.
+* Some are spam.
+* Some only need to be read and ignored.
+
+I wanted to experiment with whether an AI model could handle the **first layer of decision-making** for me.
+
+Instead of treating an LLM as simply a chatbot that generates text, I wanted to use it as part of an actual automation pipeline:
+
+```text
+Email
+  ↓
+Understand
+  ↓
+Classify
+  ↓
+Decide
+  ↓
+Route
+  ↓
+Take Action
+```
+
+That became the foundation for this project.
 
 ---
 
-## Architecture
+# What I Built
 
-```
-Gmail IMAP (every 60s)
-    |
-    v
-[Deduplication] --skip duplicates-->
-    |
-    v
-[Content Extraction] --clean HTML, extract text-->
-    |
-    v
-[LLM Classification] --GPT-4o-mini: intent, urgency, sentiment-->
-    |
-    v
-[Intent Router] --branch by category-->
-    |--urgent--------> Slack Alert (#email-alerts)
-    |--action_req----> Notion Task + Draft Response (GPT-4o)
-    |--meeting-------> Extract Dates → Calendar
-    |--newsletter----> Archive to "Newsletters" folder
-    |--spam----------> Quarantine to "Spam" folder
-    |--default-------> Log to PostgreSQL
+The system is an **n8n-based email processing workflow**.
+
+It retrieves incoming emails, cleans and structures their contents, sends the relevant information to an LLM for analysis, and then uses the resulting classification to determine what should happen next.
+
+At a high level:
+
+```text
+                    ┌─────────────────┐
+                    │   Email Inbox   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │  Fetch Emails   │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Normalize Email │
+                    │   & Clean Data  │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │   AI Analysis   │
+                    │                 │
+                    │ Intent          │
+                    │ Urgency         │
+                    │ Sentiment       │
+                    │ Entities        │
+                    │ Action          │
+                    └────────┬────────┘
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ Intent Router   │
+                    └────────┬────────┘
+                             │
+             ┌───────────────┼────────────────┐
+             ▼               ▼                ▼
+          Urgent        Action Required     Meeting
+             │               │                │
+             ▼               ▼                ▼
+           Slack          Notion          Date/Time
+           Alert           Task            Extraction
+
+             ┌───────────────┼────────────────┐
+             ▼               ▼
+        Newsletter          Spam
+             │               │
+             ▼               ▼
+          Archive          Quarantine
 ```
 
-**Full architecture:** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+The important part of the project is the combination of **AI reasoning and deterministic workflow automation**.
+
+The AI decides what an email appears to be.
+
+The workflow decides what to do with that result.
 
 ---
 
-## Quick Start
+# Current Features
 
-### Prerequisites
+## 📥 Email Ingestion
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop) (Windows/Mac/Linux)
-- 4 GB RAM minimum
-- OpenAI API key ([get one free](https://platform.openai.com/api-keys))
-- Gmail App Password ([generate here](https://myaccount.google.com/apppasswords))
+The workflow retrieves emails through IMAP and processes them in batches.
 
-### Deploy (Windows)
+The email information is then converted into a structure that the rest of the workflow can work with.
 
-```cmd
-# 1. Clone or download this repository
-cd email-agent
+The data includes things such as:
 
-# 2. Run the deploy script
-deploy.bat
-
-# 3. Enter your API keys when prompted
-```
-
-### Deploy (Linux/Mac)
-
-```bash
-cd email-agent
-cp .env.example .env
-# Edit .env with your credentials
-nano .env
-docker compose up -d
-docker cp database/schema.sql email-agent-postgres:/schema.sql
-docker exec -i email-agent-postgres psql -U n8n -d n8n -f /schema.sql
-```
-
-### Post-Deployment
-
-1. Open http://localhost:5678
-2. Sign in with credentials from `.env` (default: `admin` / `change_me_now`)
-3. **Workflows** → **Import from File** → Select `n8n-workflows/email_agent_workflow.json`
-4. Add credentials in **Settings** → **Credentials** (IMAP, OpenAI, Slack, Notion)
-5. Open each workflow node and select your credential from the dropdown
-6. Click **Save** → **Activate**
-
-**Full guide:** See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+* Sender
+* Recipients
+* Subject
+* Date
+* Message ID
+* Email content
+* HTML content
+* Attachment information
 
 ---
 
-## Project Structure
+## 🔄 Duplicate Detection
 
+I added duplicate detection so that the same email does not unnecessarily pass through the AI processing pipeline multiple times.
+
+The current prototype uses n8n workflow data for this mechanism.
+
+This is an area I intend to improve as the system evolves.
+
+---
+
+## 🧹 Email Normalization
+
+Emails are not always received in a clean format.
+
+Some contain HTML, some contain plain text, and others contain additional metadata or formatting.
+
+The workflow therefore normalizes the incoming information before sending it to the AI layer.
+
+This makes the classification step more predictable.
+
+---
+
+# 🧠 AI Email Analysis
+
+The core of the project is the AI classification step.
+
+For every processed email, the model is asked to analyze the message and produce structured information rather than simply returning a natural-language response.
+
+The current analysis includes:
+
+```text
+Intent
+Confidence
+Urgency Score
+Sentiment
+Entities
+Suggested Action
+Summary
 ```
-email-agent/
-├── docker-compose.yml          # Infrastructure stack
-├── .env.example                # Configuration template
-├── deploy.bat                  # One-click Windows deploy
-├── test.bat                    # Health check script
-├── README.md                   # This file
-├── .gitignore                  # Git ignore rules
-│
-├── n8n-workflows/
-│   └── email_agent_workflow.json   # Importable n8n workflow (15 nodes)
+
+The email can be classified into categories such as:
+
+```text
+urgent
+action_required
+informational
+newsletter
+spam
+meeting_request
+```
+
+The system also attempts to identify useful information such as:
+
+* Deadlines
+* Action items
+* People mentioned
+* Projects
+* Important dates
+
+This structured output is then passed into the rest of the n8n workflow.
+
+---
+
+# ⚡ Automated Routing
+
+Once an email has been classified, the workflow determines what should happen next.
+
+### Urgent Emails
+
+Urgent messages can trigger a Slack notification.
+
+The idea is that important messages should not have to wait for someone to manually discover them inside an inbox.
+
+### Action-Required Emails
+
+Emails that require action can be converted into tasks through Notion.
+
+The system can also generate a suggested response.
+
+### Meeting Requests
+
+The prototype attempts to identify dates and times contained within meeting-related emails.
+
+This is currently an early implementation rather than a complete calendar automation system.
+
+### Newsletters
+
+Newsletter-type emails can be routed toward a dedicated mailbox folder.
+
+### Spam
+
+Emails classified as spam can be moved toward a spam/quarantine workflow.
+
+---
+
+# ✍️ AI Response Drafting
+
+For emails that require a response, I added a separate AI step that generates a **draft response**.
+
+The system can use information such as:
+
+* The original email
+* Detected action items
+* Email intent
+* Desired response tone
+
+to generate a suggested reply.
+
+Importantly, the current prototype **does not automatically send the generated response**.
+
+I intentionally kept this as a draft-generation step because automatically sending an AI-generated email introduces a completely different level of risk.
+
+A future version could introduce a proper human-approval step before sending anything externally.
+
+---
+
+# 🗓️ Meeting Detection
+
+The prototype also contains an early attempt at extracting meeting-related dates and times from emails.
+
+The current implementation focuses on identifying potential scheduling information.
+
+It does **not yet create calendar events automatically**.
+
+This is one of the areas I would expand in a future iteration.
+
+---
+
+# 🛠️ Technology Stack
+
+| Technology     | Purpose                                     |
+| -------------- | ------------------------------------------- |
+| **n8n**        | Workflow automation and orchestration       |
+| **LLM**        | Email understanding and classification      |
+| **IMAP**       | Email retrieval                             |
+| **Slack**      | Urgent notifications                        |
+| **Notion**     | Task creation                               |
+| **PostgreSQL** | Planned persistent application data         |
+| **Redis**      | Planned caching / queue infrastructure      |
+| **Qdrant**     | Planned vector/RAG infrastructure           |
+| **Docker**     | Local infrastructure and service management |
+| **JavaScript** | Custom logic inside n8n Code nodes          |
+
+---
+
+# 📁 Project Structure
+
+```text
+n8n-built-email-automation-agent-build/
 │
 ├── database/
-│   └── schema.sql              # PostgreSQL schema (6 tables, 2 views)
-│
-├── monitoring/
-│   ├── prometheus.yml          # Metrics collection config
-│   └── grafana-dashboard.json  # Operations dashboard (17 panels)
+│   └── schema.sql
 │
 ├── docs/
-│   ├── ARCHITECTURE.md         # System design & tech stack
-│   ├── DEPLOYMENT.md           # Step-by-step deploy guide
-│   └── PROMPTS.md              # LLM prompt library (8 prompts)
+│   ├── ARCHITECTURE.md
+│   ├── DEPLOYMENT.md
+│   └── PROMPTS.md
 │
-└── scripts/                    # Additional automation scripts
+├── monitoring/
+│   ├── prometheus.yml
+│   └── grafana-dashboard.json
+│
+├── n8n-workflows/
+│   └── email_agent_workflow.json
+│
+├── .env.example
+├── .gitignore
+├── docker-compose.yml
+├── deploy.bat
+├── test.bat
+└── README.md
 ```
 
 ---
 
-## Tech Stack
+# 🚧 Prototype Status
 
-| Layer | Technology |
-|-------|-----------|
-| Workflow Engine | [n8n](https://n8n.io) (self-hosted) |
-| LLM | [OpenAI GPT-4o / GPT-4o-mini](https://openai.com) |
-| Database | [PostgreSQL 15](https://postgresql.org) |
-| Cache / Queue | [Redis 7](https://redis.io) |
-| Vector DB | [Qdrant](https://qdrant.tech) |
-| Monitoring | [Prometheus](https://prometheus.io) + [Grafana](https://grafana.com) |
-| Containerization | [Docker](https://docker.com) + Docker Compose |
+This project is intentionally **not presented as a finished production system**.
 
----
+I built the prototype to establish the core workflow and experiment with the architecture.
 
-## Cost Breakdown
+There are several areas where the repository contains infrastructure or design ideas that are not yet fully integrated into the main workflow.
 
-| Component | Monthly Cost |
-|-----------|-------------|
-| Self-hosted n8n | **$0** |
-| Docker / PostgreSQL / Redis | **$0** |
-| OpenAI GPT-4o-mini | **~$0.50** per 1,000 emails |
-| Gmail IMAP | **$0** |
-| Slack (free tier) | **$0** |
-| Notion (free tier) | **$0** |
-| **Total** | **$0–$5/month** |
+For example:
+
+* Deduplication currently relies on n8n workflow data.
+* Database persistence is not yet used for every processing event.
+* Meeting detection does not yet create calendar events.
+* AI responses are generated as drafts rather than automatically sent.
+* A complete human-approval system is still to be implemented.
+* Qdrant is part of the planned architecture but a complete RAG pipeline is not yet implemented.
+* Monitoring infrastructure exists as part of the project direction, but the system is not yet fully instrumented.
+* Error handling and recovery need further hardening.
+
+I consider these **next engineering steps**, rather than pretending they are already solved.
 
 ---
 
-## Screenshots
+# What I Learned From Building It
 
-*(Add screenshots of your n8n workflow, Grafana dashboard, and Slack alerts here)*
+The most interesting part of this project was realizing that an AI automation system is much more complicated than simply connecting an LLM to an API.
+
+Getting an AI model to classify an email is relatively straightforward.
+
+The difficult questions start afterwards:
+
+* What happens when the model is wrong?
+* What happens when confidence is low?
+* How should duplicate emails be handled?
+* Which actions should require approval?
+* How can an AI-generated response be safely reviewed?
+* What happens when an external API fails?
+* How should decisions be logged?
+* How can the system be evaluated objectively?
+* How should sensitive email information be handled?
+
+These are the problems I want to explore as I continue developing the project.
 
 ---
 
-## API & Integrations
+# Future Development
 
-The workflow supports these integrations out of the box:
+My planned improvements include:
 
-- **Gmail** (IMAP) — Email ingestion
-- **Outlook / Exchange** (Microsoft Graph) — Enterprise email
-- **Slack** — Urgent alerts and approvals
-- **Notion** — Task creation and tracking
-- **OpenAI** — LLM classification and drafting
-- **Any webhook** — Custom triggers
+### AI
+
+* Better structured output validation
+* Improved classification prompts
+* Confidence-based decision making
+* Evaluation datasets
+* Conversation/thread awareness
+* Better handling of attachments
+* Context-aware response generation
+
+### Automation
+
+* Human approval before consequential actions
+* Automatic calendar integration
+* Automated follow-ups
+* More advanced Slack workflows
+* Better task management integration
+
+### Infrastructure
+
+* Persistent Redis-based processing
+* PostgreSQL-backed execution history
+* Qdrant-based RAG
+* Better retry mechanisms
+* Dead-letter queues
+* Improved observability
+* Prometheus/Grafana monitoring
+
+### Security
+
+* Stronger credential management
+* Better protection of email data
+* Permission boundaries for automated actions
+* Audit logging
+* Safer handling of AI-generated content
 
 ---
 
-## Monitoring
+# Running the Project
 
-Enable Prometheus + Grafana by uncommenting the services in `docker-compose.yml`:
+## Requirements
 
-```yaml
-  prometheus:
-    # ... (uncomment this block)
+You will need:
 
-  grafana:
-    # ... (uncomment this block)
+* Docker Desktop
+* An IMAP-enabled email account
+* An LLM API credential
+* Slack credentials if Slack notifications are being used
+* Notion credentials if Notion tasks are being used
+
+Start the infrastructure with:
+
+```bash
+docker compose up -d
 ```
 
-Then access:
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin / from `.env`)
+Then access n8n at:
 
-**Dashboard includes:** Emails processed, error rate, LLM cost, queue depth, latency percentiles, pending approvals.
+```text
+http://localhost:5678
+```
 
----
+Import:
 
-## Troubleshooting
+```text
+n8n-workflows/email_agent_workflow.json
+```
 
-| Issue | Solution |
-|-------|----------|
-| Docker not found | Install [Docker Desktop](https://docker.com) |
-| Port 5432 in use | Stop local PostgreSQL: `net stop postgresql-x64-15` |
-| IMAP connection failed | Use Gmail App Password, not regular password |
-| OpenAI API error | Check credits at [platform.openai.com](https://platform.openai.com) |
-| Credential not found | Create in n8n Settings, then select in each node |
-| n8n won't start | `docker compose down && docker compose up -d` |
-
-**Full troubleshooting:** See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+Configure the required credentials inside n8n and test the workflow using a controlled mailbox before connecting it to an important email account.
 
 ---
 
-## Roadmap
+# Project Philosophy
 
-- [ ] Kubernetes Helm chart for cloud deployment
-- [ ] RAG knowledge base with Qdrant vector search
-- [ ] Multi-user support with role-based access
-- [ ] Calendar integration (Google Calendar, Cal.com)
-- [ ] Mobile app for approval notifications
-- [ ] Advanced spam/phishing detection with local LLM
+I built this project around a simple idea:
 
----
+> **AI should make workflows more intelligent, not make workflows less predictable.**
 
-## Contributing
+The LLM is useful for understanding unstructured human communication.
 
-1. Fork this repository
-2. Create a feature branch: `git checkout -b feature/my-feature`
-3. Commit your changes: `git commit -am 'Add new feature'`
-4. Push to the branch: `git push origin feature/my-feature`
-5. Open a Pull Request
+The workflow automation layer is useful for executing predictable actions.
+
+Combining the two creates something more interesting than either component by itself.
+
+The current implementation is only the beginning.
 
 ---
 
-## License
+# Current Progress
 
-This project is licensed under the MIT License.
+```text
+[x] Email ingestion
+[x] Email normalization
+[x] Duplicate detection
+[x] AI email classification
+[x] Intent-based routing
+[x] Urgent email notification
+[x] Notion task creation
+[x] AI response drafting
+[x] Newsletter routing
+[x] Spam routing
+[x] Basic meeting information extraction
+
+[ ] Human approval workflow
+[ ] Calendar integration
+[ ] Persistent execution history
+[ ] Robust retry / recovery system
+[ ] RAG implementation
+[ ] Automated evaluation
+[ ] Production security hardening
+[ ] Full observability
+[ ] Multi-user support
+```
 
 ---
 
-## Acknowledgments
+# Final Thoughts
 
-- Built with [n8n](https://n8n.io) — the fair-code workflow automation platform
-- LLM powered by [OpenAI](https://openai.com)
-- Vector search by [Qdrant](https://qdrant.tech)
+This is a **prototype that I built to explore AI-driven workflow automation**.
 
----
+It is not intended to claim that autonomous email management has been completely solved.
 
-**Status: Production Ready** ✅
+Instead, the project represents my attempt to take an LLM beyond a simple chat interface and place it inside a real automation pipeline where its output can influence actual software behavior.
 
-Double-click `deploy.bat` to get started.
+There is still a lot of engineering work between this prototype and a production-grade system.
+
+That gap is also what makes the project interesting to me.
+
+**This repository is where that experimentation starts.**
