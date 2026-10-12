@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS emails (
         CHECK (processing_status IN ('pending', 'processing', 'completed', 'failed', 'quarantined')),
     dedup_hash VARCHAR(64) UNIQUE,
     is_duplicate BOOLEAN DEFAULT FALSE,
+    processing_duration_ms INTEGER,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -53,6 +54,7 @@ CREATE TABLE IF NOT EXISTS classifications (
     sentiment VARCHAR(20) CHECK (sentiment IN ('positive', 'neutral', 'negative')),
     entities JSONB DEFAULT '{}',
     model_used VARCHAR(100),
+    summary TEXT,
     tokens_input INTEGER,
     tokens_output INTEGER,
     classified_at TIMESTAMPTZ DEFAULT NOW(),

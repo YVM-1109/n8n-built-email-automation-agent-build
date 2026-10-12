@@ -40,3 +40,12 @@ venv/
 
 # n8n local data (if mounted locally)
 .n8n/
+
+# local secrets
+.n8n-cloud-api-key.txt
+.n8n-tmp/
+
+# local-only ops helpers (credential/token handling stays off the remote)
+tools/keydrop.py
+tools/serve_json.py
+tools/decrypt_credential.py
